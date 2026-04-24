@@ -11,6 +11,10 @@ class Config:
         self.events_path = self.home_path / "events"
         self.events_path.mkdir(exist_ok=True)
         
+        # 新增memory目录配置
+        self.memory_path = self.home_path / "memory"
+        self.memory_path.mkdir(exist_ok=True)
+        
         load_dotenv(self.home_path / ".env")
         
         self.feishu_app_id = os.getenv("FEISHU_APP_ID", "")

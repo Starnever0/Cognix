@@ -12,19 +12,20 @@ class SQLiteStore:
     def _init_tables(self):
         cursor = self.conn.cursor()
         
-        # 偏好表
+        # 偏好表，新增md_hash字段用于同步校验
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS preferences (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key TEXT UNIQUE NOT NULL,
             value TEXT NOT NULL,
             weight REAL DEFAULT 1.0,
+            md_hash TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
         
-        # 规则表
+        # 规则表，新增md_hash字段用于同步校验
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS rules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +33,7 @@ class SQLiteStore:
             trigger TEXT NOT NULL,
             action TEXT NOT NULL,
             status TEXT DEFAULT 'pending', -- pending/active/disabled
+            md_hash TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -40,30 +42,31 @@ class SQLiteStore:
         self.conn.commit()
     
     # 偏好相关操作
-    def set_preference(self, key: str, value: Dict, weight: float = 1.0):
+    def set_preference(self, key: str, value: Dict, weight: float = 1.0, md_hash: str = ''):
         cursor = self.conn.cursor()
         cursor.execute('''
-        REPLACE INTO preferences (key, value, weight, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (key, json.dumps(value, ensure_ascii=False), weight))
+        REPLACE INTO preferences (key, value, weight, md_hash, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (key, json.dumps(value, ensure_ascii=False), weight, md_hash))
         self.conn.commit()
     
     def get_preference(self, key: str) -> Optional[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute('SELECT value FROM preferences WHERE key = ?', (key,))
+        cursor.execute('SELECT value, weight FROM preferences WHERE key = ?', (key,))
         result = cursor.fetchone()
-        return json.loads(result[0]) if result else None
+        return {"value": json.loads(result[0]), "weight": result[1]} if result else None
     
     def list_preferences(self) -> List[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute('SELECT key, value, weight, created_at, updated_at FROM preferences')
+        cursor.execute('SELECT key, value, weight, created_at, updated_at, md_hash FROM preferences')
         return [
             {
                 "key": row[0], 
                 "value": json.loads(row[1]), 
                 "weight": row[2],
                 "created_at": row[3],
-                "updated_at": row[4]
+                "updated_at": row[4],
+                "md_hash": row[5]
             } 
             for row in cursor.fetchall()
         ]
@@ -74,21 +77,21 @@ class SQLiteStore:
         self.conn.commit()
     
     # 规则相关操作
-    def add_rule(self, name: str, trigger: str, action: Dict, status: str = 'pending') -> int:
+    def add_rule(self, name: str, trigger: str, action: Dict, status: str = 'pending', md_hash: str = '') -> int:
         cursor = self.conn.cursor()
         cursor.execute('''
-        INSERT INTO rules (name, trigger, action, status)
-        VALUES (?, ?, ?, ?)
-        ''', (name, trigger, json.dumps(action, ensure_ascii=False), status))
+        INSERT INTO rules (name, trigger, action, status, md_hash)
+        VALUES (?, ?, ?, ?, ?)
+        ''', (name, trigger, json.dumps(action, ensure_ascii=False), status, md_hash))
         self.conn.commit()
         return cursor.lastrowid
     
-    def update_rule_status(self, rule_id: int, status: str):
+    def update_rule_status(self, rule_id: int, status: str, md_hash: str = ''):
         cursor = self.conn.cursor()
         cursor.execute('''
-        UPDATE rules SET status = ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE rules SET status = ?, md_hash = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-        ''', (status, rule_id))
+        ''', (status, md_hash, rule_id))
         self.conn.commit()
     
     def update_rule(self, rule_id: int, **kwargs):
@@ -109,9 +112,9 @@ class SQLiteStore:
     def list_rules(self, status: Optional[str] = None) -> List[Dict]:
         cursor = self.conn.cursor()
         if status:
-            cursor.execute('SELECT id, name, trigger, action, status, created_at, updated_at FROM rules WHERE status = ?', (status,))
+            cursor.execute('SELECT id, name, trigger, action, status, created_at, updated_at, md_hash FROM rules WHERE status = ?', (status,))
         else:
-            cursor.execute('SELECT id, name, trigger, action, status, created_at, updated_at FROM rules')
+            cursor.execute('SELECT id, name, trigger, action, status, created_at, updated_at, md_hash FROM rules')
         return [
             {
                 "id": row[0], 
@@ -120,14 +123,15 @@ class SQLiteStore:
                 "action": json.loads(row[3]), 
                 "status": row[4],
                 "created_at": row[5],
-                "updated_at": row[6]
+                "updated_at": row[6],
+                "md_hash": row[7]
             } 
             for row in cursor.fetchall()
         ]
     
     def get_rule(self, rule_id: int) -> Optional[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute('SELECT id, name, trigger, action, status FROM rules WHERE id = ?', (rule_id,))
+        cursor.execute('SELECT id, name, trigger, action, status, md_hash FROM rules WHERE id = ?', (rule_id,))
         row = cursor.fetchone()
         if row:
             return {
@@ -135,7 +139,8 @@ class SQLiteStore:
                 "name": row[1], 
                 "trigger": row[2], 
                 "action": json.loads(row[3]), 
-                "status": row[4]
+                "status": row[4],
+                "md_hash": row[5]
             }
         return None
     

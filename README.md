@@ -15,6 +15,8 @@
 - 📝 **可解释性**：所有记忆和规则都清晰可见，支持手动编辑和确认，避免黑盒问题
 - 🤖 **多入口支持**：同时提供 CLI 工具和飞书 Bot 两种交互方式，适配不同使用场景
 - ⚡ **轻量化设计**：基于 SQLite + 文件存储，无需外部数据库，开箱即用
+- ✅ **【新增】可编辑记忆**：所有偏好和规则以Markdown文件存储，支持直接手动编辑，零学习成本修改记忆
+- ✅ **【新增】偏好体系**：8大类30+细分偏好配置，覆盖所有办公场景个性化需求
 
 ## 🎯 应用场景
 
@@ -30,7 +32,8 @@
 - **CLI 框架**：Click
 - **任务调度**：APScheduler
 - **飞书接入**：lark-oapi-sdk
-- **持久化存储**：SQLite + JSON 文件
+- ~~**持久化存储**：SQLite + JSON 文件~~
+- **【修改】持久化存储**：Markdown（真相源） + SQLite（索引层） + JSONL（事件日志）
 - **AI 集成**：LangChain 生态（可对接任意大模型）
 - **无外部依赖**：无需部署 Redis、MySQL 等服务，开箱即用
 
@@ -62,6 +65,11 @@ cognix config set feishu_chat_id "oc_xxxxxx"
 cognix config set report_format "markdown"
 cognix config set weekly_report_time "周五 18:00"
 cognix config set weekly_report_receiver "张三,李四"
+
+# 【新增】直接编辑Markdown文件配置
+# 打开偏好配置文件：~/.cognix/memory/preferences.md
+# 打开规则配置文件：~/.cognix/memory/rules.md
+# 保存后自动生效，无需重启服务
 ```
 
 ### 核心功能使用
@@ -86,6 +94,12 @@ cognix suggest generate-weekly
 
 # 6. 生成周报统计
 cognix weekly-report
+
+# 【新增】偏好管理命令
+cognix config list --all # 查看所有偏好及说明
+cognix config export preferences.md # 导出偏好配置
+cognix config import preferences.md # 导入偏好配置
+cognix config reset # 重置所有偏好为默认值
 ```
 
 ## 📚 功能介绍
@@ -96,6 +110,18 @@ Cognix 会自动采集和学习以下行为数据：
 - 飞书日程、消息、文档访问记录
 - 手动上报的偏好和事件
 - 规则执行的反馈结果
+
+【新增记忆结构】：
+- **短期记忆**：JSONL格式存储事件日志，按天滚动
+- **中期记忆**：Markdown格式存储用户偏好，支持手动编辑
+- **长期记忆**：Markdown格式存储自动化规则和知识
+- **索引层**：SQLite自动同步Markdown内容，提供高性能查询
+
+【📌 双向存储设计理念】：
+- ✅ **零门槛操作**：所有配置以纯Markdown存储，用户可直接编辑，无需学习命令
+- ⚡ **高性能查询**：SQLite作为索引层，提供毫秒级查询性能，避免全量解析Markdown
+- 🔒 **数据永不丢失**：Markdown为唯一真相源，SQLite可随时重建，天然备份
+- 📦 **迁移零成本**：纯文本格式永久兼容，复制文件即可完成迁移/备份
 
 ### 规则引擎
 系统支持以下规则类型：
@@ -110,6 +136,14 @@ Cognix 会自动采集和学习以下行为数据：
 - 飞书交互式卡片
 - 自动生成内容并发送
 
+### 【新增】偏好管理
+Cognix提供8大类30+细分偏好配置：
+- 基础配置：语言、时区、免打扰等
+- 内容生成偏好：格式、风格、长度等
+- 场景化偏好：周报、会议等场景专属配置
+- 通知偏好：渠道、时间、级别等
+- 隐私配置：数据采集、敏感信息过滤等
+
 ## 📖 文档索引
 
 - [需求文档](./docs/需求文档.md)
@@ -117,6 +151,8 @@ Cognix 会自动采集和学习以下行为数据：
 - [实现计划](./docs/实现计划.md)
 - [API 文档](./docs/API文档.md)
 - [开发指南](./docs/开发指南.md)
+- 【新增】[记忆格式说明](./docs/记忆格式说明.md)
+- 【新增】[偏好配置手册](./docs/偏好配置手册.md)
 
 ## 👨‍💻 开发指南
 
@@ -147,8 +183,9 @@ cognix/
 │   ├── scheduler.py           # 任务调度
 │   └── event_collector.py     # 事件采集与学习
 ├── storage/           # 存储层
-│   ├── sqlite_store.py        # SQLite 存储
-│   └── file_store.py          # 文件存储
+│   ├── sqlite_store.py        # SQLite 索引存储
+│   ├── file_store.py          # JSONL 事件存储
+│   └── markdown_store.py      # 【新增】Markdown 记忆存储
 ├── interfaces/        # 交互层
 │   ├── cli/                 # CLI 工具
 │   └── feishu/              # 飞书 Bot
