@@ -1,0 +1,77 @@
+name: cognix-memory
+description: Cognix 非侵入式记忆系统 - 为 Agent 提供记忆存取能力
+version: 0.2.0
+
+tools:
+  - name: remember
+    description: 记录一条记忆，保存用户的交互信息、偏好或重要事项
+    command: cognix remember "{heading}" "{content}"
+    parameters:
+      - name: heading
+        type: string
+        description: 记忆标题，简短概括记忆内容
+        required: true
+      - name: content
+        type: string
+        description: 记忆的详细内容
+        required: true
+      - name: persistent
+        type: boolean
+        description: 是否保存为持久记忆（跨会话保留）
+        required: false
+        default: false
+    examples:
+      - command: cognix remember "用户偏好" "用户喜欢用表格格式查看周报"
+        description: 记录用户偏好
+      - command: cognix remember "会议纪要" "讨论了Q2目标，重点在用户增长" --persistent
+        description: 持久化记录重要信息
+
+  - name: recall
+    description: 搜索记忆，查找与关键词相关的历史信息
+    command: cognix recall "{query}"
+    parameters:
+      - name: query
+        type: string
+        description: 搜索关键词
+        required: true
+      - name: limit
+        type: integer
+        description: 返回结果数量
+        required: false
+        default: 10
+      - name: source
+        type: string
+        description: 来源过滤(memory/persistent)
+        required: false
+    examples:
+      - command: cognix recall "周报"
+        description: 搜索与周报相关的记忆
+      - command: cognix recall "偏好" --source persistent
+        description: 在持久记忆中搜索偏好
+
+  - name: context
+    description: 获取近期上下文，了解最近发生的事情
+    command: cognix context --days {days}
+    parameters:
+      - name: days
+        type: integer
+        description: 回溯天数
+        required: false
+        default: 1
+    examples:
+      - command: cognix context --days 3
+        description: 获取最近3天的上下文
+
+  - name: dream
+    description: 手动触发记忆整理，去重、解决冲突、提取偏好
+    command: cognix dream
+    parameters: []
+    examples:
+      - command: cognix dream
+        description: 触发一次记忆整理
+
+triggers:
+  - description: 当用户提到偏好、习惯或喜好时，使用 remember 记录
+  - description: 当需要回忆之前讨论的内容时，使用 recall 搜索
+  - description: 当开始新的对话时，使用 context 获取近期上下文
+  - description: 当对话中出现重要决策或结论时，使用 remember 持久化记录
