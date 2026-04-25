@@ -245,17 +245,19 @@ class MarkdownMemory:
             if source:
                 cursor.execute('''
                     SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text
-                    FROM chunks c
-                    WHERE c.text LIKE ? AND c.source = ?
+                    FROM chunks_fts fts
+                    JOIN chunks c ON fts.id = c.id
+                    WHERE chunks_fts MATCH ? AND c.source = ?
                     LIMIT ?
-                ''', (f'%{query}%', source, limit))
+                ''', (query, source, limit))
             else:
                 cursor.execute('''
                     SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text
-                    FROM chunks c
-                    WHERE c.text LIKE ?
+                    FROM chunks_fts fts
+                    JOIN chunks c ON fts.id = c.id
+                    WHERE chunks_fts MATCH ?
                     LIMIT ?
-                ''', (f'%{query}%', limit))
+                ''', (query, limit))
             
             rows = cursor.fetchall()
             
