@@ -2,44 +2,25 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.10-green.svg)]()
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 
-面向企业办公场景的主动式个人工作习惯记忆引擎，核心价值是主动理解用户工作模式，在正确时间提供正确帮助，让 AI 真正适配人的工作习惯，而不是让人适配 AI。
+非侵入式记忆系统，为 AI Agent 提供记忆存取能力。任何 Agent 系统都可以通过 CLI 命令 + Skill 描述文件无冲突调用，让 Agent 真正记住用户的交互信息与习惯偏好。
 
-## ✨ 核心特性
+## 特性
 
-- 🧠 **偏好记忆**：自动记住用户长期办公偏好（文档格式、汇报对象、习惯时间等），无需反复说明
-- 🔍 **规律挖掘**：从 Shell 历史、飞书行为、日程数据中自动发现周期性工作习惯和规律
-- ⏰ **主动服务**：在合适时机主动提醒、生成内容甚至执行重复性任务，减少手动操作
-- 🔄 **动态适配**：根据用户行为变化自动调整记忆和规则，适应工作模式的演进
-- 📝 **可解释性**：所有记忆和规则都清晰可见，支持手动编辑和确认，避免黑盒问题
-- 🤖 **多入口支持**：同时提供 CLI 工具和飞书 Bot 两种交互方式，适配不同使用场景
-- ⚡ **轻量化设计**：基于 SQLite + 文件存储，无需外部数据库，开箱即用
+- **非侵入式设计**：通过 CLI 命令和 Skill 描述文件接入，不侵入 Agent 内部逻辑
+- **多级记忆**：短期记忆（会话级）、每日记忆（Markdown）、持久记忆（MEMORY.md），自动管理生命周期
+- **FTS5 全文搜索**：基于 SQLite FTS5 的高效记忆检索
+- **飞书集成**：监听飞书消息事件，自动记录对话到记忆系统
+- **短期记忆压缩**：上下文达到阈值时自动压缩为长期记忆
+- **Autodream 定时整理**：每 24 小时自动去重、解决冲突、提取偏好
+- **OpenClaw Skill**：提供 YAML 格式 Skill 描述，飞书 OpenClaw Agent 可直接调用
+- **Markdown + SQLite 双存储**：Markdown 是真实来源，SQLite 是索引，人类可读且高效检索
 
-## 🎯 应用场景
-
-- **自动周报生成**：每周五自动汇总一周工作内容，生成符合你习惯格式的周报
-- **会议准备提醒**：会议前 10 分钟自动拉取相关文档，提醒你准备相关材料
-- **重复任务自动化**：识别周期性重复操作，生成自动化规则，一键执行
-- **工作习惯优化**：分析工作时间分布，给出合理的时间管理建议
-- **个性化 AI 助手**：为上层 AI Agent 提供个人记忆能力，让助手更懂你
-
-## 🛠️ 技术栈
-
-- **核心开发**：Python 3.10+
-- **CLI 框架**：Click
-- **任务调度**：APScheduler
-- **飞书接入**：lark-oapi-sdk
-- **持久化存储**：SQLite + JSON 文件
-- **AI 集成**：LangChain 生态（可对接任意大模型）
-- **无外部依赖**：无需部署 Redis、MySQL 等服务，开箱即用
-
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
 - Python >= 3.10
-- pip 包管理器
 
 ### 安装
 
@@ -47,118 +28,125 @@
 pip install cognix
 ```
 
-### 基础配置
+### CLI 命令
 
 ```bash
-# 初始化配置
-cognix init
+# 记录一条记忆
+cognix remember "用户偏好" "用户喜欢用表格格式查看周报"
 
-# 配置飞书 Bot（可选，需要飞书开发者权限）
-cognix config set feishu_app_id "cli_xxxxxx"
-cognix config set feishu_app_secret "xxxxxx"
-cognix config set feishu_chat_id "oc_xxxxxx"
+# 记录持久记忆（跨会话保留）
+cognix remember "重要决策" "Q2 目标重点在用户增长" --persistent
 
-# 配置个人偏好
-cognix config set report_format "markdown"
-cognix config set weekly_report_time "周五 18:00"
-cognix config set weekly_report_receiver "张三,李四"
+# 搜索记忆
+cognix recall "周报"
+
+# 搜索持久记忆
+cognix recall "偏好" --source persistent
+
+# 获取近期上下文
+cognix context --days 3
+
+# 手动触发记忆整理
+cognix dream
+
+# 启动后台服务（Hook + 定时整理）
+cognix serve --dream-interval 24
 ```
 
-### 核心功能使用
+### 飞书 OpenClaw 集成
 
-```bash
-# 1. 创建周报自动生成规则
-cognix rule create-weekly
-# 确认规则生效
-cognix rule confirm 1
+将 `skills/cognix-memory.yaml` 添加到 OpenClaw Agent 的 Skill 目录即可。Agent 会自动识别以下工具：
 
-# 2. 查看所有规则
-cognix rule list
+| 工具 | 用途 |
+|------|------|
+| `remember` | 记录用户的交互信息、偏好或重要事项 |
+| `recall` | 搜索与关键词相关的历史信息 |
+| `context` | 获取近期上下文，了解最近发生的事情 |
+| `dream` | 手动触发记忆整理 |
 
-# 3. 启动后台服务
-cognix start
+## 架构
 
-# 4. 查看服务状态
-cognix status
-
-# 5. 手动触发周报生成
-cognix suggest generate-weekly
-
-# 6. 生成周报统计
-cognix weekly-report
+```
+┌─────────────────────────────────────────────────────────┐
+│                    飞书 OpenClaw Agent                    │
+│  (通过 CLI 命令 + Skill 描述文件调用 Cognix)              │
+└──────────────┬──────────────────────┬───────────────────┘
+               │ CLI                  │ Skill
+               ▼                      ▼
+┌──────────────────────────────────────────────────────────┐
+│                    Cognix 记忆系统                         │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  CLI 入口     │  │  飞书 Hook    │  │  Autodream    │  │
+│  │  remember     │  │  消息监听     │  │  定时整理      │  │
+│  │  recall       │  │  自动记录     │  │  压缩/去重     │  │
+│  │  context      │  │              │  │  偏好提取      │  │
+│  └──────┬───────┘  └──────┬───────┘  └───────┬───────┘  │
+│         │                 │                   │          │
+│         ▼                 ▼                   ▼          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │            记忆核心 (memory_system.py)             │   │
+│  │  短期记忆 → 每日记忆 → 持久记忆 → FTS5 索引       │   │
+│  └──────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## 📚 功能介绍
+详细架构说明请参考 [架构文档](./docs/architecture.md)。
 
-### 记忆管理
-Cognix 会自动采集和学习以下行为数据：
-- Shell 命令执行历史
-- 飞书日程、消息、文档访问记录
-- 手动上报的偏好和事件
-- 规则执行的反馈结果
-
-### 规则引擎
-系统支持以下规则类型：
-- 时间触发规则：固定时间执行特定动作
-- 事件触发规则：特定事件发生时执行动作
-- 条件触发规则：满足特定条件时自动触发
-
-### 主动交互
-支持多种主动提醒方式：
-- CLI 桌面通知
-- 飞书消息通知
-- 飞书交互式卡片
-- 自动生成内容并发送
-
-## 📖 文档索引
-
-- [需求文档](./docs/需求文档.md)
-- [产品需求文档(PRD)](./docs/PRD.md)
-- [实现计划](./docs/实现计划.md)
-- [API 文档](./docs/API文档.md)
-- [开发指南](./docs/开发指南.md)
-
-## 👨‍💻 开发指南
-
-### 本地开发
-
-```bash
-# 克隆项目
-git clone https://github.com/your-org/cognix.git
-cd cognix
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 安装为开发模式
-pip install -e .
-
-# 运行测试
-pytest tests/
-```
-
-### 项目结构
+## 项目结构
 
 ```
 cognix/
-├── core/              # 核心业务模块
-│   ├── preference_store.py    # 偏好存储
-│   ├── rule_engine.py         # 规则引擎
-│   ├── scheduler.py           # 任务调度
-│   └── event_collector.py     # 事件采集与学习
-├── storage/           # 存储层
-│   ├── sqlite_store.py        # SQLite 存储
-│   └── file_store.py          # 文件存储
-├── interfaces/        # 交互层
-│   ├── cli/                 # CLI 工具
-│   └── feishu/              # 飞书 Bot
-└── utils/             # 工具函数
+├── core/                          # 核心业务模块
+│   ├── memory_system.py           # Markdown + SQLite 记忆核心
+│   ├── preference_store.py        # 偏好存储
+│   ├── compressor.py              # 短期记忆压缩
+│   ├── deduplicator.py            # 记忆去重
+│   ├── conflict_resolver.py       # 冲突解决
+│   └── preference_extractor.py    # 偏好提取
+├── hooks/                         # 事件监听
+│   ├── base.py                    # Hook 基类
+│   ├── feishu_hook.py             # 飞书消息 Hook
+│   └── context_threshold.py       # 上下文阈值触发器
+├── dream/                         # 定时整理
+│   └── scheduler.py               # Autodream 调度器
+├── interfaces/                    # 交互层
+│   ├── agent/                     # Agent 接口
+│   ├── cli/                       # CLI 工具
+│   │   ├── main.py                # CLI 入口
+│   │   ├── cmd_remember.py        # remember 子命令
+│   │   ├── cmd_recall.py          # recall 子命令
+│   │   ├── cmd_context.py         # context 子命令
+│   │   ├── cmd_dream.py           # dream 子命令
+│   │   └── cmd_serve.py           # serve 子命令
+│   └── feishu/                    # 飞书集成
+│       ├── client.py              # 飞书 API 客户端
+│       └── event_handler.py       # 飞书事件处理
+├── storage/                       # 存储层
+│   ├── sqlite_store.py            # SQLite 存储
+│   └── markdown_store.py          # Markdown 存储
+└── utils/                         # 工具函数
+    └── config.py                  # 配置管理
+skills/
+└── cognix-memory.yaml             # OpenClaw Skill 描述
 ```
 
-## 🤝 贡献
+## 文档索引
 
-欢迎提交 Issue 和 Pull Request 来改进项目。
+- [架构说明](./docs/architecture.md)
+- [CLI 使用指南](./docs/cli-guide.md)
+- [飞书集成指南](./docs/feishu-integration.md)
+- [设计文档](./docs/superpowers/specs/2026-04-25-feishu-memory-integration-design.md)
 
-## 📄 许可证
+## 本地开发
 
-本项目采用 [MIT](./LICENSE) 许可证。
+```bash
+git clone https://github.com/Starnever0/Cognix.git
+cd Cognix
+pip install -e .
+pytest tests/
+```
+
+## 许可证
+
+[MIT](./LICENSE)
