@@ -1,416 +1,410 @@
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
-import json
 import hashlib
 import sqlite3
+import uuid
 
 from cognix.utils.config import config
 
 
-class MemorySystem:
+class MarkdownMemory:
+    """Markdown文件格式记忆系统 - Markdown是真实来源，SQLite是索引"""
+    
     def __init__(self):
-        self.short_term_memory = {}
         self._conn = self._get_connection()
-        self._init_memory_tables()
-        self.md_storage_path = config.home_path / "memories"
-        self.md_storage_path.mkdir(parents=True, exist_ok=True)
-
+        self._init_tables()
+        
+        # 创建目录结构
+        self.memory_dir = config.home_path / "memory"
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.sessions_dir = config.home_path / "sessions"
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 短期记忆（会话级）
+        self.short_term_memory: Dict[str, List[Dict]] = {}
+    
     def _get_connection(self):
         return sqlite3.connect(config.db_path)
-
-    def _init_memory_tables(self):
+    
+    def _init_tables(self):
         cursor = self._conn.cursor()
         
+        # 文件元数据表
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS short_term_memory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            confidence REAL DEFAULT 1.0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP
+        CREATE TABLE IF NOT EXISTS files (
+            path TEXT PRIMARY KEY,
+            source TEXT NOT NULL DEFAULT 'memory',
+            hash TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
         )
         ''')
         
+        # 记忆块表
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS long_term_memory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            memory_type TEXT NOT NULL,
-            key TEXT NOT NULL UNIQUE,
-            value TEXT NOT NULL,
-            confidence REAL DEFAULT 1.0,
-            md_file_path TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS chunks (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'memory',
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            hash TEXT NOT NULL,
+            text TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
         )
         ''')
         
+        # 全文搜索索引（FTS5）
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS memory_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_memory_id INTEGER NOT NULL,
-            target_memory_id INTEGER NOT NULL,
-            relation_type TEXT,
-            confidence REAL DEFAULT 0.8,
-            FOREIGN KEY (source_memory_id) REFERENCES long_term_memory(id),
-            FOREIGN KEY (target_memory_id) REFERENCES long_term_memory(id),
-            UNIQUE(source_memory_id, target_memory_id)
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            text,
+            id UNINDEXED,
+            path UNINDEXED,
+            source UNINDEXED
         )
         ''')
         
-        cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_stm_session ON short_term_memory(session_id)
-        ''')
-        
-        cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_ltm_key ON long_term_memory(key)
-        ''')
-        
-        cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_ltm_type ON long_term_memory(memory_type)
-        ''')
+        # 索引
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source)')
         
         self._conn.commit()
-
-    def add_short_term_memory(self, session_id: str, key: str, value: Any, expires_in_minutes: int = 1440) -> int:
-        expires_at = datetime.now() + timedelta(minutes=expires_in_minutes)
-        cursor = self._conn.cursor()
-        cursor.execute('''
-        INSERT INTO short_term_memory (session_id, key, value, expires_at)
-        VALUES (?, ?, ?, ?)
-        ''', (session_id, key, json.dumps(value, ensure_ascii=False), expires_at.isoformat()))
-        self._conn.commit()
-        return cursor.lastrowid
-
-    def get_short_term_memory(self, session_id: str, key: str = None) -> Union[List[Dict], Dict, None]:
-        cursor = self._conn.cursor()
-        now = datetime.now().isoformat()
-        
-        if key:
-            cursor.execute('''
-            SELECT key, value, confidence, created_at FROM short_term_memory
-            WHERE session_id = ? AND key = ? AND expires_at > ?
-            ''', (session_id, key, now))
-            row = cursor.fetchone()
-            if row:
-                return {
-                    "key": row[0],
-                    "value": json.loads(row[1]),
-                    "confidence": row[2],
-                    "created_at": row[3]
-                }
-            return None
-        else:
-            cursor.execute('''
-            SELECT key, value, confidence, created_at FROM short_term_memory
-            WHERE session_id = ? AND expires_at > ?
-            ''', (session_id, now))
-            return [
-                {
-                    "key": row[0],
-                    "value": json.loads(row[1]),
-                    "confidence": row[2],
-                    "created_at": row[3]
-                }
-                for row in cursor.fetchall()
-            ]
-
-    def delete_short_term_memory(self, session_id: str, key: str = None):
-        cursor = self._conn.cursor()
-        if key:
-            cursor.execute('DELETE FROM short_term_memory WHERE session_id = ? AND key = ?', (session_id, key))
-        else:
-            cursor.execute('DELETE FROM short_term_memory WHERE session_id = ?', (session_id,))
-        self._conn.commit()
-
-    def _generate_md_filename(self, memory_type: str, key: str) -> str:
-        hash_suffix = hashlib.md5(f"{memory_type}_{key}".encode()).hexdigest()[:8]
-        date_prefix = datetime.now().strftime("%Y%m%d")
-        return f"{memory_type}_{date_prefix}_{hash_suffix}.md"
-
-    def _write_memory_to_md(self, memory_type: str, key: str, value: dict) -> str:
-        filename = self._generate_md_filename(memory_type, key)
-        file_path = self.md_storage_path / filename
-        
-        md_content = f"""---
-memory_type: {memory_type}
-key: {key}
-created_at: {datetime.now().isoformat()}
----
-
-## {key}
-
-{json.dumps(value, ensure_ascii=False, indent=2)}
-"""
-        
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(md_content)
-        
-        return str(file_path)
-
-    def add_long_term_memory(self, memory_type: str, key: str, value: Any, confidence: float = 1.0) -> int:
-        md_file_path = self._write_memory_to_md(memory_type, key, value if isinstance(value, dict) else {"content": value})
-        
-        cursor = self._conn.cursor()
-        cursor.execute('''
-        INSERT INTO long_term_memory (memory_type, key, value, confidence, md_file_path)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET 
-            value = excluded.value, 
-            confidence = excluded.confidence,
-            md_file_path = excluded.md_file_path,
-            updated_at = CURRENT_TIMESTAMP
-        ''', (memory_type, key, json.dumps(value, ensure_ascii=False), confidence, md_file_path))
-        self._conn.commit()
-        
-        return cursor.lastrowid
-
-    def get_long_term_memory(self, memory_type: str = None, key: str = None) -> Union[List[Dict], Dict, None]:
-        cursor = self._conn.cursor()
-        
-        if key:
-            cursor.execute('''
-            SELECT id, memory_type, key, value, confidence, md_file_path, created_at, updated_at, accessed_at
-            FROM long_term_memory WHERE key = ?
-            ''', (key,))
-            row = cursor.fetchone()
-            if row:
-                cursor.execute('UPDATE long_term_memory SET accessed_at = CURRENT_TIMESTAMP WHERE id = ?', (row[0],))
-                self._conn.commit()
-                return {
-                    "id": row[0],
-                    "memory_type": row[1],
-                    "key": row[2],
-                    "value": json.loads(row[3]),
-                    "confidence": row[4],
-                    "md_file_path": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7],
-                    "accessed_at": row[8]
-                }
-            return None
-        else:
-            if memory_type:
-                cursor.execute('''
-                SELECT id, memory_type, key, value, confidence, md_file_path, created_at, updated_at, accessed_at
-                FROM long_term_memory WHERE memory_type = ?
-                ORDER BY accessed_at DESC
-                ''', (memory_type,))
-            else:
-                cursor.execute('''
-                SELECT id, memory_type, key, value, confidence, md_file_path, created_at, updated_at, accessed_at
-                FROM long_term_memory
-                ORDER BY accessed_at DESC
-                ''')
-            
-            results = []
-            for row in cursor.fetchall():
-                results.append({
-                    "id": row[0],
-                    "memory_type": row[1],
-                    "key": row[2],
-                    "value": json.loads(row[3]),
-                    "confidence": row[4],
-                    "md_file_path": row[5],
-                    "created_at": row[6],
-                    "updated_at": row[7],
-                    "accessed_at": row[8]
-                })
-                cursor.execute('UPDATE long_term_memory SET accessed_at = CURRENT_TIMESTAMP WHERE id = ?', (row[0],))
-            self._conn.commit()
-            
-            return results
-
-    def update_long_term_memory(self, key: str, value: Any = None, confidence: float = None):
-        cursor = self._conn.cursor()
-        updates = []
-        params = []
-        
-        if value is not None:
-            updates.append("value = ?")
-            params.append(json.dumps(value, ensure_ascii=False))
-            memory = self.get_long_term_memory(key=key)
-            if memory:
-                md_file_path = self._write_memory_to_md(memory["memory_type"], key, value if isinstance(value, dict) else {"content": value})
-                updates.append("md_file_path = ?")
-                params.append(md_file_path)
-        
-        if confidence is not None:
-            updates.append("confidence = ?")
-            params.append(confidence)
-        
-        updates.append("updated_at = CURRENT_TIMESTAMP")
-        params.append(key)
-        
-        query = f"UPDATE long_term_memory SET {', '.join(updates)} WHERE key = ?"
-        cursor.execute(query, params)
-        self._conn.commit()
-
-    def delete_long_term_memory(self, key: str) -> bool:
-        memory = self.get_long_term_memory(key=key)
-        if memory:
-            if memory.get("md_file_path"):
-                try:
-                    Path(memory["md_file_path"]).unlink()
-                except:
-                    pass
-            
-            cursor = self._conn.cursor()
-            cursor.execute('DELETE FROM long_term_memory WHERE key = ?', (key,))
-            cursor.execute('DELETE FROM memory_links WHERE source_memory_id = ? OR target_memory_id = ?', (memory["id"], memory["id"]))
-            self._conn.commit()
-            return True
-        return False
-
-    def add_memory_link(self, source_key: str, target_key: str, relation_type: str = "related_to", confidence: float = 0.8):
-        source_memory = self.get_long_term_memory(key=source_key)
-        target_memory = self.get_long_term_memory(key=target_key)
-        
-        if source_memory and target_memory:
-            cursor = self._conn.cursor()
-            cursor.execute('''
-            INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(source_memory_id, target_memory_id) DO UPDATE SET
-                relation_type = excluded.relation_type,
-                confidence = excluded.confidence
-            ''', (source_memory["id"], target_memory["id"], relation_type, confidence))
-            self._conn.commit()
-
-    def get_related_memories(self, key: str, relation_type: str = None) -> List[Dict]:
-        memory = self.get_long_term_memory(key=key)
-        if not memory:
+    
+    def _compute_hash(self, text: str) -> str:
+        """计算内容的SHA256哈希"""
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    
+    def _get_daily_md_path(self, date: Optional[datetime] = None) -> Path:
+        """获取每日记忆文件路径"""
+        if date is None:
+            date = datetime.now()
+        return self.memory_dir / f"{date.strftime('%Y-%m-%d')}.md"
+    
+    def _ensure_daily_md(self, date: Optional[datetime] = None) -> Path:
+        """确保每日记忆文件存在"""
+        file_path = self._get_daily_md_path(date)
+        if not file_path.exists():
+            content = f"# {datetime.now().strftime('%Y-%m-%d')} 日志\n\n"
+            file_path.write_text(content, encoding='utf-8')
+        return file_path
+    
+    def _parse_markdown_chunks(self, file_path: Path) -> List[Dict]:
+        """解析Markdown文件为记忆块"""
+        if not file_path.exists():
             return []
         
-        cursor = self._conn.cursor()
-        if relation_type:
-            cursor.execute('''
-            SELECT lt.id, lt.memory_type, lt.key, lt.value, lt.confidence
-            FROM memory_links ml
-            JOIN long_term_memory lt ON ml.target_memory_id = lt.id
-            WHERE ml.source_memory_id = ? AND ml.relation_type = ?
-            ''', (memory["id"], relation_type))
-        else:
-            cursor.execute('''
-            SELECT lt.id, lt.memory_type, lt.key, lt.value, lt.confidence
-            FROM memory_links ml
-            JOIN long_term_memory lt ON ml.target_memory_id = lt.id
-            WHERE ml.source_memory_id = ?
-            ''', (memory["id"],))
+        lines = file_path.read_text(encoding='utf-8').split('\n')
+        chunks = []
+        current_heading = None
+        current_lines = []
+        current_start_line = 0
         
-        return [
-            {
-                "id": row[0],
-                "memory_type": row[1],
-                "key": row[2],
-                "value": json.loads(row[3]),
-                "confidence": row[4]
-            }
-            for row in cursor.fetchall()
-        ]
-
-    def decay_memory_confidence(self, days_threshold: int = 30, decay_rate: float = 0.1):
+        for line_num, line in enumerate(lines):
+            # 检测标题行（## 开始）
+            if line.startswith('## '):
+                # 保存之前的块
+                if current_heading and current_lines:
+                    chunk_text = '\n'.join(current_lines)
+                    chunks.append({
+                        'heading': current_heading,
+                        'text': chunk_text,
+                        'start_line': current_start_line,
+                        'end_line': line_num - 1
+                    })
+                
+                # 开始新块
+                current_heading = line[3:].strip()
+                current_lines = [line]
+                current_start_line = line_num + 1  # 行号从1开始
+            elif current_heading is not None:
+                current_lines.append(line)
+        
+        # 保存最后一个块
+        if current_heading and current_lines:
+            chunk_text = '\n'.join(current_lines)
+            chunks.append({
+                'heading': current_heading,
+                'text': chunk_text,
+                'start_line': current_start_line,
+                'end_line': len(lines)
+            })
+        
+        return chunks
+    
+    def _index_markdown_file(self, file_path: Path, source: str = "memory"):
+        """索引单个Markdown文件"""
+        if not file_path.exists():
+            return
+        
+        content = file_path.read_text(encoding='utf-8')
+        file_hash = self._compute_hash(content)
+        file_mtime = int(file_path.stat().st_mtime * 1000)
+        file_str = str(file_path.absolute())
+        
         cursor = self._conn.cursor()
-        threshold_date = (datetime.now() - timedelta(days=days_threshold)).isoformat()
+        
+        # 检查文件是否已更新
+        cursor.execute('SELECT hash FROM files WHERE path = ?', (file_str,))
+        row = cursor.fetchone()
+        
+        if row and row[0] == file_hash:
+            return  # 未变化，无需重新索引
+        
+        # 删除旧索引
+        cursor.execute('DELETE FROM chunks WHERE path = ?', (file_str,))
+        
+        # 解析新块
+        chunks = self._parse_markdown_chunks(file_path)
+        
+        for chunk in chunks:
+            chunk_id = str(uuid.uuid4())
+            chunk_hash = self._compute_hash(chunk['text'])
+            
+            # 插入chunks表
+            cursor.execute('''
+                INSERT INTO chunks (id, path, source, start_line, end_line, hash, text, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (chunk_id, file_str, source, chunk['start_line'], chunk['end_line'], 
+                  chunk_hash, chunk['text'], file_mtime))
+            
+            # 插入FTS索引
+            try:
+                cursor.execute('''
+                    INSERT INTO chunks_fts (text, id, path, source)
+                    VALUES (?, ?, ?, ?)
+                ''', (chunk['text'], chunk_id, file_str, source))
+            except Exception:
+                # FTS索引可能有问题，跳过
+                pass
+        
+        # 更新文件元数据
         cursor.execute('''
-        UPDATE long_term_memory 
-        SET confidence = MAX(0.1, confidence - ?)
-        WHERE accessed_at < ? AND confidence > 0.1
-        ''', (decay_rate, threshold_date))
+            INSERT OR REPLACE INTO files (path, source, hash, updated_at)
+            VALUES (?, ?, ?, ?)
+        ''', (file_str, source, file_hash, file_mtime))
+        
         self._conn.commit()
-
-    def search_memories(self, query: str, memory_type: str = None, limit: int = 10) -> List[Dict]:
+    
+    def _index_all_memory_files(self):
+        """索引所有记忆文件"""
+        # 索引每日日志
+        for md_file in self.memory_dir.glob("*.md"):
+            self._index_markdown_file(md_file, "memory")
+        
+        # 索引MEMORY.md（如果存在）
+        memory_md = config.home_path / "MEMORY.md"
+        if memory_md.exists():
+            self._index_markdown_file(memory_md, "persistent")
+    
+    def _append_to_markdown(self, file_path: Path, heading: str, content: str):
+        """向Markdown文件追加内容"""
+        if not file_path.exists():
+            md_content = f"# {datetime.now().strftime('%Y-%m-%d')} 日志\n\n"
+            file_path.write_text(md_content, encoding='utf-8')
+        
+        md_content = file_path.read_text(encoding='utf-8')
+        
+        # 检查是否已有该标题
+        heading_line = f"## {heading}"
+        if heading_line in md_content:
+            # 追加到现有标题下
+            before_heading, after_heading = md_content.split(heading_line, 1)
+            new_content = before_heading + heading_line + '\n' + content + '\n' + after_heading
+        else:
+            # 添加新标题
+            new_content = md_content + f"\n## {heading}\n\n{content}\n"
+        
+        file_path.write_text(new_content, encoding='utf-8')
+        self._index_markdown_file(file_path, "memory")
+    
+    def add_memory(self, heading: str, content: str, date: Optional[datetime] = None):
+        """添加记忆到每日日志"""
+        file_path = self._ensure_daily_md(date)
+        self._append_to_markdown(file_path, heading, content)
+    
+    def add_persistent_memory(self, heading: str, content: str):
+        """添加持久记忆到MEMORY.md"""
+        memory_md = config.home_path / "MEMORY.md"
+        # 确保文件有合适的标题
+        if not memory_md.exists():
+            memory_md.write_text("# 持久记忆\n\n", encoding='utf-8')
+        self._append_to_markdown(memory_md, heading, content)
+    
+    def search_memory(self, query: str, limit: int = 10, source: Optional[str] = None) -> List[Dict]:
+        """搜索记忆 - 优先使用FTS5全文搜索"""
+        self._index_all_memory_files()  # 确保索引最新
+        
         cursor = self._conn.cursor()
-        query_like = f"%{query}%"
         
-        if memory_type:
-            cursor.execute('''
-            SELECT id, memory_type, key, value, confidence, created_at, updated_at
-            FROM long_term_memory 
-            WHERE memory_type = ? AND (key LIKE ? OR value LIKE ?)
-            ORDER BY confidence DESC, accessed_at DESC
-            LIMIT ?
-            ''', (memory_type, query_like, query_like, limit))
-        else:
-            cursor.execute('''
-            SELECT id, memory_type, key, value, confidence, created_at, updated_at
-            FROM long_term_memory 
-            WHERE key LIKE ? OR value LIKE ?
-            ORDER BY confidence DESC, accessed_at DESC
-            LIMIT ?
-            ''', (query_like, query_like, limit))
+        # 改进搜索策略：先尝试FTS，失败后使用LIKE回退
+        results = []
         
-        return [
-            {
-                "id": row[0],
-                "memory_type": row[1],
-                "key": row[2],
-                "value": json.loads(row[3]),
-                "confidence": row[4],
-                "created_at": row[5],
-                "updated_at": row[6]
-            }
-            for row in cursor.fetchall()
-        ]
-
-    def prepare_context_for_agent(self, session_id: str, query: str = None) -> Dict:
-        context = {
-            "short_term": [],
-            "long_term": {
-                "facts": [],
-                "preferences": [],
-                "experiences": []
-            },
-            "related_memories": []
-        }
+        try:
+            # 方法1：使用FTS全文搜索
+            if source:
+                cursor.execute('''
+                    SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text
+                    FROM chunks c
+                    WHERE c.text LIKE ? AND c.source = ?
+                    LIMIT ?
+                ''', (f'%{query}%', source, limit))
+            else:
+                cursor.execute('''
+                    SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text
+                    FROM chunks c
+                    WHERE c.text LIKE ?
+                    LIMIT ?
+                ''', (f'%{query}%', limit))
+            
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                results.append({
+                    'id': row[0],
+                    'path': row[1],
+                    'source': row[2],
+                    'start_line': row[3],
+                    'end_line': row[4],
+                    'text': row[5],
+                    'score': 1.0
+                })
         
-        context["short_term"] = self.get_short_term_memory(session_id)
+        except Exception as e:
+            # 如果FTS搜索出错，尝试直接从Markdown文件读取
+            pass
         
-        if query:
-            context["long_term"]["facts"] = self.search_memories(query, "fact", limit=5)
-            context["long_term"]["preferences"] = self.search_memories(query, "preference", limit=5)
-            context["long_term"]["experiences"] = self.search_memories(query, "experience", limit=5)
-        else:
-            context["long_term"]["facts"] = self.get_long_term_memory("fact")[:5]
-            context["long_term"]["preferences"] = self.get_long_term_memory("preference")[:5]
-            context["long_term"]["experiences"] = self.get_long_term_memory("experience")[:5]
+        # 如果没有结果，尝试直接读取Markdown文件搜索
+        if not results:
+            results = self._fallback_search(query, source, limit)
         
-        return context
-
-    def record_agent_interaction(self, session_id: str, user_input: str, agent_response: str, tool_calls: List[Dict] = None):
-        interaction = {
-            "user_input": user_input,
-            "agent_response": agent_response,
-            "tool_calls": tool_calls or [],
-            "timestamp": datetime.now().isoformat()
-        }
-        return self.add_short_term_memory(session_id, f"interaction_{datetime.now().timestamp()}", interaction)
-
-    def import_memories(self, memories: List[Dict]):
-        for memory in memories:
-            self.add_long_term_memory(
-                memory_type=memory.get("memory_type", "fact"),
-                key=memory["key"],
-                value=memory["value"],
-                confidence=memory.get("confidence", 1.0)
-            )
-
-    def export_memories(self, memory_type: str = None) -> List[Dict]:
-        return self.get_long_term_memory(memory_type)
-
+        return results
+    
+    def _fallback_search(self, query: str, source: Optional[str], limit: int) -> List[Dict]:
+        """回退搜索：直接读取Markdown文件搜索"""
+        results = []
+        query_lower = query.lower()
+        
+        # 搜索每日记忆
+        for md_file in self.memory_dir.glob("*.md"):
+            if source and source != 'memory':
+                continue
+            
+            content = md_file.read_text(encoding='utf-8')
+            if query_lower in content.lower():
+                results.append({
+                    'id': str(hash(str(md_file))),
+                    'path': str(md_file),
+                    'source': 'memory',
+                    'start_line': 1,
+                    'end_line': len(content.split('\n')),
+                    'text': content,
+                    'score': 0.8
+                })
+                if len(results) >= limit:
+                    break
+        
+        # 搜索持久记忆
+        if len(results) < limit:
+            memory_md = self.memory_dir.parent / "MEMORY.md"
+            if memory_md.exists() and (source is None or source == 'persistent'):
+                content = memory_md.read_text(encoding='utf-8')
+                if query_lower in content.lower():
+                    results.append({
+                        'id': str(hash(str(memory_md))),
+                        'path': str(memory_md),
+                        'source': 'persistent',
+                        'start_line': 1,
+                        'end_line': len(content.split('\n')),
+                        'text': content,
+                        'score': 0.9
+                    })
+        
+        return results[:limit]
+    
+    def read_memory_file(self, file_path: Path, start_line: Optional[int] = None, 
+                        end_line: Optional[int] = None) -> str:
+        """读取记忆文件内容"""
+        if not file_path.exists():
+            return ""
+        
+        lines = file_path.read_text(encoding='utf-8').split('\n')
+        
+        if start_line is None:
+            start_line = 1
+        if end_line is None:
+            end_line = len(lines)
+        
+        # 调整为0基索引
+        start_idx = max(0, start_line - 1)
+        end_idx = min(len(lines), end_line)
+        
+        return '\n'.join(lines[start_idx:end_idx])
+    
+    def get_daily_context(self, days_back: int = 1) -> str:
+        """获取最近几天的上下文"""
+        context_parts = []
+        today = datetime.now()
+        
+        for i in range(days_back, -1, -1):
+            date = today - timedelta(days=i)
+            file_path = self._get_daily_md_path(date)
+            if file_path.exists():
+                content = self.read_memory_file(file_path)
+                if content.strip():
+                    context_parts.append(f"## {date.strftime('%Y-%m-%d')}\n{content}")
+        
+        # 加入MEMORY.md
+        memory_md = config.home_path / "MEMORY.md"
+        if memory_md.exists():
+            content = self.read_memory_file(memory_md)
+            if content.strip():
+                context_parts.append(f"## 持久记忆\n{content}")
+        
+        return '\n\n'.join(context_parts)
+    
+    def add_short_term(self, session_id: str, key: str, value: Any):
+        """添加短期记忆"""
+        if session_id not in self.short_term_memory:
+            self.short_term_memory[session_id] = []
+        
+        self.short_term_memory[session_id].append({
+            'key': key,
+            'value': value,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    def get_short_term(self, session_id: str) -> List[Dict]:
+        """获取短期记忆"""
+        return self.short_term_memory.get(session_id, [])
+    
+    def clear_short_term(self, session_id: str):
+        """清除短期记忆"""
+        if session_id in self.short_term_memory:
+            del self.short_term_memory[session_id]
+    
+    def rebuild_index(self):
+        """重建索引"""
+        cursor = self._conn.cursor()
+        cursor.execute('DELETE FROM files')
+        cursor.execute('DELETE FROM chunks')
+        cursor.execute('DELETE FROM chunks_fts')
+        self._conn.commit()
+        self._index_all_memory_files()
+    
     def close(self):
         self._conn.close()
 
 
-_memory_system_instance = None
+_memory_instance = None
 
-def get_memory_system():
-    global _memory_system_instance
-    if _memory_system_instance is None:
-        _memory_system_instance = MemorySystem()
-    return _memory_system_instance
 
-memory_system = get_memory_system()
+def get_memory_system() -> MarkdownMemory:
+    global _memory_instance
+    if _memory_instance is None:
+        _memory_instance = MarkdownMemory()
+    return _memory_instance
+
+
+# 延迟创建，避免导入时就初始化
+memory_system = None

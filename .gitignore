@@ -45,5 +45,6 @@ venv.bak/
 
 # Temporary files
 tmp*/
+test_*/
 *.db
 test.db
