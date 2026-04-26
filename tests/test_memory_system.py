@@ -76,6 +76,26 @@ class TestMarkdownMemory(unittest.TestCase):
         results = self.memory.search_memory("测试用户")
         self.assertTrue(any("测试用户" in r['text'] for r in results))
     
+    def test_classified_memory_integration(self):
+        """测试分类记忆集成"""
+        # 测试分类记忆集成
+        self.memory.add_classified_memory("office", "周报", "每周五发周报")
+        
+        # 搜索应该能找到分类记忆
+        results = self.memory.search_memory("周报")
+        assert any("每周五发周报" in r['text'] for r in results)
+        
+        # 现有add_persistent_memory应该兼容并自动分类
+        self.memory.add_persistent_memory("用户信息", "姓名：张三，职位：开发工程师")
+        results = self.memory.search_memory("张三")
+        assert len(results) > 0
+        
+        # 测试自动分类到office
+        self.memory.add_persistent_memory("工作习惯", "周报默认发给王经理")
+        results = self.memory.search_memory("王经理")
+        assert len(results) > 0
+        assert any("office.md" in r['path'] for r in results)
+    
     def test_short_term_memory(self):
         """测试短期记忆"""
         session_id = "test-session-123"

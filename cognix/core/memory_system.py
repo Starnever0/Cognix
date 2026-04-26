@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 
 from cognix.utils.config import config
+from .memory_classifier import MemoryClassifier
 
 
 class MarkdownMemory:
@@ -24,6 +25,9 @@ class MarkdownMemory:
         
         # 短期记忆（会话级）
         self.short_term_memory: Dict[str, List[Dict]] = {}
+        
+        # 分类记忆管理器
+        self.classifier = MemoryClassifier(self.memory_dir)
     
     def _get_connection(self):
         return sqlite3.connect(config.db_path)
@@ -223,13 +227,42 @@ class MarkdownMemory:
         file_path = self._ensure_daily_md(date)
         self._append_to_markdown(file_path, heading, content)
     
+    def add_classified_memory(self, category: str, heading: str, content: str) -> None:
+        """
+        添加分类记忆
+        :param category: 分类：user/settings/office/feedback/reference
+        :param heading: 记忆标题
+        :param content: 记忆内容
+        """
+        self.classifier.add_memory(category, heading, content)
+        # 索引新添加的内容
+        file_path = self.classifier.get_category_path(category)
+        self._index_markdown_file(file_path, "memory")
+    
     def add_persistent_memory(self, heading: str, content: str):
-        """添加持久记忆到MEMORY.md"""
-        memory_md = config.home_path / "MEMORY.md"
-        # 确保文件有合适的标题
-        if not memory_md.exists():
-            memory_md.write_text("# 持久记忆\n\n", encoding='utf-8')
-        self._append_to_markdown(memory_md, heading, content)
+        """
+        添加持久记忆（兼容旧接口）
+        自动分类到合适的分类存储
+        """
+        # 简单自动分类逻辑
+        category = "reference"
+        heading_lower = heading.lower()
+        content_lower = content.lower()
+        
+        if any(keyword in heading_lower or keyword in content_lower 
+               for keyword in ["用户", "姓名", "角色", "职位", "称呼", "常用语言", "输出风格"]):
+            category = "user"
+        elif any(keyword in heading_lower or keyword in content_lower 
+                 for keyword in ["设置", "偏好", "默认", "视图", "通知", "模板", "格式"]):
+            category = "settings"
+        elif any(keyword in heading_lower or keyword in content_lower 
+                 for keyword in ["办公", "周报", "会议", "流程", "习惯", "发送给", "联系人", "审批"]):
+            category = "office"
+        elif any(keyword in heading_lower or keyword in content_lower 
+                 for keyword in ["反馈", "建议", "修正", "应该", "不要", "需要", "注意"]):
+            category = "feedback"
+        
+        self.add_classified_memory(category, heading, content)
     
     def search_memory(self, query: str, limit: int = 10, source: Optional[str] = None) -> List[Dict]:
         """搜索记忆 - 优先使用FTS5全文搜索"""
