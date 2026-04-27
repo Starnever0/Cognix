@@ -5,6 +5,14 @@
 
 非侵入式记忆引擎，为 AI Agent 提供长期记忆、短期上下文、工作习惯理解、流程复用与主动提醒能力。面向飞书办公场景的外挂式记忆系统，让 AI 助手越用越懂用户、越用越会做事。
 
+## 更新日志
+
+### 2026-04-27
+- ✅ **OpenClaw 插件接入测试完成**
+  - 新增 `openclaw-plugin-cognix/` 目录，包含 TypeScript 插件实现
+  - 支持 `memory_search`、`memory_store`、`memory_get`、`memory_list`、`memory_forget` 5 个工具
+  - 支持 auto-capture（自动存储对话）和 auto-recall（自动注入记忆）
+
 ## 特性
 
 - **五层架构**：数据接入层 → 短期记忆层 → 长期记忆层 → 智能决策层 → 服务执行层

@@ -1,0 +1,43 @@
+{
+  "id": "openclaw-cognix-plugin",
+  "description": "OpenClaw memory plugin using Cognix (self-hosted)",
+  "kind": "memory",
+  "uiHints": {
+    "host": {
+      "label": "Cognix API Host",
+      "placeholder": "http://localhost:8765",
+      "help": "Cognix API 服务器地址"
+    },
+    "apiKey": {
+      "label": "API Key",
+      "sensitive": true,
+      "help": "API Key（可使用 dummy）"
+    },
+    "userId": {
+      "label": "User ID",
+      "placeholder": "default",
+      "help": "用户标识"
+    },
+    "autoCapture": {
+      "label": "Auto-Capture",
+      "help": "自动存储对话内容"
+    },
+    "autoRecall": {
+      "label": "Auto-Recall",
+      "help": "自动注入相关记忆"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "host": { "type": "string" },
+      "apiKey": { "type": "string" },
+      "userId": { "type": "string" },
+      "autoCapture": { "type": "boolean" },
+      "autoRecall": { "type": "boolean" },
+      "searchThreshold": { "type": "number" },
+      "topK": { "type": "number" }
+    }
+  }
+}
