@@ -427,6 +427,53 @@ class MarkdownMemory:
         self._conn.commit()
         self._index_all_memory_files()
     
+    def get_pending_compression_sessions(self) -> List[Dict]:
+        """
+        获取所有待压缩的会话
+        :return: 会话列表，包含id和content
+        """
+        sessions = []
+        for session_id, entries in self.short_term_memory.items():
+            # 组装会话内容
+            content_parts = []
+            for entry in entries:
+                content_parts.append(f"{entry.get('key', '')}: {entry.get('value', '')}")
+            
+            content = "\n".join(content_parts)
+            if content.strip():
+                sessions.append({
+                    "id": session_id,
+                    "content": content
+                })
+        
+        return sessions
+    
+    def mark_session_compressed(self, session_id: str):
+        """
+        标记会话已压缩，清除短期记忆
+        :param session_id: 会话ID
+        """
+        self.clear_short_term(session_id)
+    
+    def archive_old_sessions(self, before_date: datetime) -> int:
+        """
+        归档指定日期之前的会话
+        :param before_date: 归档截止日期
+        :return: 归档的会话数量
+        """
+        # 目前短期记忆是内存存储，暂无历史会话，返回0
+        # 后续接入Redis后完善该功能
+        return 0
+    
+    def cleanup_archived_sessions(self, before_date: datetime) -> int:
+        """
+        清理指定日期之前的已归档会话
+        :param before_date: 清理截止日期
+        :return: 清理的会话数量
+        """
+        # 后续完善该功能
+        return 0
+    
     def close(self):
         self._conn.close()
 

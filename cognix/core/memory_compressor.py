@@ -204,6 +204,25 @@ class MemoryCompressor:
             session_content = event.metadata.get("session_content", "")
             if session_content:
                 self.compress_and_save(session_content)
+    
+    def compress_all_pending(self) -> int:
+        """
+        压缩所有待处理的短期记忆
+        :return: 成功压缩的记忆数量
+        """
+        pending_sessions = self.memory_system.get_pending_compression_sessions()
+        processed = 0
+        
+        for session in pending_sessions:
+            session_content = session.get("content", "")
+            if session_content:
+                memories = self.compress_and_save(session_content)
+                if memories:
+                    processed += len(memories)
+                    # 标记会话为已压缩
+                    self.memory_system.mark_session_compressed(session["id"])
+        
+        return processed
 
 
 # 全局实例

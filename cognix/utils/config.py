@@ -25,5 +25,10 @@ class Config:
         self.redis_db = int(os.getenv("REDIS_DB", 0))
         self.redis_password = os.getenv("REDIS_PASSWORD", "")
         self.short_term_ttl = int(os.getenv("SHORT_TERM_TTL", 3600))  # 短期记忆默认过期时间1小时
+        
+        # Autodream配置
+        self.autodream_enabled = os.getenv("AUTODREAM_ENABLED", "false").lower() == "true"  # 默认关闭
+        self.autodream_schedule_interval = int(os.getenv("AUTODREAM_SCHEDULE_INTERVAL", 24))  # 定时执行间隔，单位小时
+        self.autodream_deduplication_threshold = float(os.getenv("AUTODREAM_DEDUPLICATION_THRESHOLD", 0.85))  # 去重相似度阈值
 
 config = Config()
