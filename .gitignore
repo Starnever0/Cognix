@@ -42,3 +42,9 @@ venv.bak/
 
 # Cognix
 ~/.cognix/
+
+# Temporary files
+tmp*/
+test_*/
+*.db
+test.db
