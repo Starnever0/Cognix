@@ -56,6 +56,8 @@ class AutodreamScheduler:
             "skill_evolution": self._run_skill_evolution(),
             "insight_generation": self._run_insight_generation(),
             "memory_compression": self._run_memory_compression(),
+            "entity_extraction": self._run_entity_extraction(),
+            "relation_building": self._run_relation_building(),
             "archive_cleanup": self._run_archive_cleanup(),
         }
         return report
@@ -116,6 +118,44 @@ class AutodreamScheduler:
         deleted = self._memory_system.cleanup_archived_sessions(one_eighty_days_ago)
         
         return {"archived": archived, "deleted": deleted}
+    
+    def _run_entity_extraction(self) -> dict:
+        """从最新记忆中抽取实体"""
+        # 扫描最近更新的Markdown文件，抽取实体
+        extracted_count = 0
+        
+        # 常见实体识别规则
+        entity_patterns = [
+            ("person", r"([姓名叫是]+)\s*([\u4e00-\u9fa5]{2,4})"),  # 人名
+            ("email", r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),  # 邮箱
+            ("url", r"https?://[^\s]+"),  # 链接
+            ("task", r"(周报|月报|日报|会议|审批|报销|出差)"),  # 办公任务
+            ("skill", r"(命令|工具|脚本|代码|模板)"),  # 技能工具
+        ]
+        
+        # 这里后续会实现完整的实体抽取逻辑，现在先占位
+        # 真实实现会调用LLM或规则引擎从记忆内容中抽取实体
+        return {"extracted": extracted_count}
+    
+    def _run_relation_building(self) -> dict:
+        """自动构建实体之间的关联关系"""
+        built_count = 0
+        
+        # 关系识别规则
+        relation_patterns = [
+            ("belongs_to", r"(属于|归|属于|是.*的)"),
+            ("used_for", r"(用于|用来|作用是|做什么)"),
+            ("related_to", r"(和|与|跟|相关)"),
+            ("depends_on", r"(依赖|需要|取决于|要用到)"),
+            ("owned_by", r"(的|属于|归.*所有)"),
+            ("sends_to", r"(发给|发送给|抄送|提交给)"),
+        ]
+        
+        # 关联逻辑：
+        # 1. 同一段内容中出现的实体自动关联为related_to
+        # 2. 匹配关系关键词的自动识别为对应关系类型
+        # 3. 置信度基于出现次数计算
+        return {"built": built_count}
 
     def _run_habit_extraction(self) -> dict:
         """执行用户习惯提取"""
@@ -143,10 +183,9 @@ class AutodreamScheduler:
 
     def _subscribe_events(self):
         """订阅事件总线的相关事件，触发autodream执行"""
-        # 会话结束事件触发单次整理
-        self._event_bus.subscribe("session_end", self._handle_session_end_event)
-        # 短期记忆达到阈值事件触发整理
-        self._event_bus.subscribe("short_term_threshold_reached", self._handle_threshold_event)
+        # 双进程架构下事件由进程层统一分发，不需要再订阅
+        # 保留方法兼容旧版本
+        pass
     
     def _handle_session_end_event(self, event: Event):
         """处理会话结束事件，触发记忆整理"""

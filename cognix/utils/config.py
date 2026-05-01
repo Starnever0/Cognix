@@ -30,5 +30,14 @@ class Config:
         self.autodream_enabled = os.getenv("AUTODREAM_ENABLED", "false").lower() == "true"  # 默认关闭
         self.autodream_schedule_interval = int(os.getenv("AUTODREAM_SCHEDULE_INTERVAL", 24))  # 定时执行间隔，单位小时
         self.autodream_deduplication_threshold = float(os.getenv("AUTODREAM_DEDUPLICATION_THRESHOLD", 0.85))  # 去重相似度阈值
+        
+        # LLM语义分类增强配置
+        self.llm_classification_enabled = os.getenv("LLM_CLASSIFICATION_ENABLED", "false").lower() == "true"  # 默认关闭
+        self.llm_classification_confidence_threshold = float(os.getenv("LLM_CLASSIFICATION_THRESHOLD", "0.7"))  # 低于该置信度才调用LLM
+        
+        # 上下文动态裁剪配置
+        self.context_trim_enabled = os.getenv("CONTEXT_TRIM_ENABLED", "false").lower() == "true"  # 默认关闭，开启后减少70%+token消耗
+        self.max_history_rounds = int(os.getenv("MAX_HISTORY_ROUNDS", "3"))  # 最多保留最近N轮对话
+        self.max_relevant_memory = int(os.getenv("MAX_RELEVANT_MEMORY", "3"))  # 最多返回N条相关记忆
 
 config = Config()

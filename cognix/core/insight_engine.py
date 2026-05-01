@@ -44,11 +44,21 @@ class InsightEngine:
     
     def _generate_optimization_suggestions(self):
         """生成习惯优化建议"""
-        habits = self.habit_extractor.get_user_habits(min_confidence=0.7, min_occur_count=3)
+        habits = self.habit_extractor.get_user_habits(min_confidence=0.7, min_occur_count=3).get("habits", [])
         
         for habit in habits:
-            content = habit["content"]
-            category = habit["category"]
+            # 兼容字符串和字典两种返回格式
+            if isinstance(habit, str):
+                content = habit
+                category = "office"  # 默认分类为办公类
+                habit_id = hash(habit)
+            else:
+                content = habit.get("content", "")
+                category = habit.get("category", "unknown")
+                habit_id = habit.get("id", hash(content))
+            
+            if not content:
+                continue
             
             # 识别可以自动化的办公习惯
             if category == "office":
@@ -67,7 +77,7 @@ class InsightEngine:
                             "content": f"检测到你有重复手动任务：「{content}」，建议创建自动化技能来完成，预计每次可节省10-30分钟",
                             "priority": 2,
                             "suggested_action": "自动生成对应工作流技能",
-                            "related_habit": habit["id"]
+                            "related_habit": habit_id
                         })
             
             # 识别低效的工作流程
@@ -78,16 +88,32 @@ class InsightEngine:
                     "content": f"检测到你有低效率操作习惯：「{content}」，可以考虑优化工作流程",
                     "priority": 1,
                     "suggested_action": "分析优化路径",
-                    "related_habit": habit["id"]
+                    "related_habit": habit_id
                 })
     
     def _generate_reminders(self):
         """生成周期性事项提醒"""
-        habits = self.habit_extractor.get_user_habits(category="office", min_confidence=0.8)
+        habits = self.habit_extractor.get_user_habits(category="office", min_confidence=0.8).get("habits", [])
         now = datetime.now()
         
         for habit in habits:
-            content = habit["content"]
+            # 超强兼容：不管是字符串、字典还是其他类型，都能处理
+            content = ""
+            habit_id = 0
+            if isinstance(habit, str):
+                content = habit
+                habit_id = hash(habit)
+            elif isinstance(habit, dict):
+                content = habit.get("content", "")
+                habit_id = habit.get("id", hash(content))
+            else:
+                # 其他类型转成字符串
+                content = str(habit)
+                habit_id = hash(content)
+            
+            content = content.strip()
+            if not content or len(content) < 5:
+                continue
             
             # 每周一的提醒
             if re.search(r"每周一|周一上午|周会|周报", content) and now.weekday() == 0:  # 0是周一
@@ -105,7 +131,7 @@ class InsightEngine:
                             "content": f"提醒：你习惯「{content}」，现在距离开始还有不到1小时",
                             "priority": 3,
                             "suggested_action": "准备相关材料",
-                            "related_habit": habit["id"]
+                            "related_habit": habit_id
                         })
             
             # 每月固定日期的提醒
@@ -119,7 +145,7 @@ class InsightEngine:
                         "content": f"提醒：今天是每月{day}号，你需要完成「{content}」",
                         "priority": 3,
                         "suggested_action": "按时完成该任务",
-                        "related_habit": habit["id"]
+                        "related_habit": habit_id
                     })
             
             # 周报提醒：每周五下午
@@ -170,9 +196,10 @@ class InsightEngine:
     
     def _generate_risk_warnings(self):
         """生成操作风险预警"""
+        now = datetime.now()
         # 最近的操作内容
         recent_memories = self.memory_system.search_memory("", limit=10)
-        feedback_habits = self.habit_extractor.get_user_habits(category="feedback", min_confidence=0.8)
+        feedback_habits = self.habit_extractor.get_user_habits(category="feedback", min_confidence=0.8).get("habits", [])
         
         if not recent_memories:
             return

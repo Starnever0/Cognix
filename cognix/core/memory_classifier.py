@@ -40,17 +40,35 @@ class MemoryClassifier:
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(f"\n## {heading}\n\n{content}\n")
     
-    def get_memory(self, category: str) -> str:
+    def get_memory(self, category: str, use_cache: bool = True) -> str:
         """
         获取分类记忆的全部内容
         :param category: 分类名称
+        :param use_cache: 是否使用缓存，默认开启
         :return: 分类文件的完整内容
         """
         if category not in self.CATEGORIES:
             raise ValueError(f"Invalid category: {category}, must be one of {self.CATEGORIES}")
         
         file_path = self.memory_dir / f"{category}.md"
-        return file_path.read_text(encoding="utf-8")
+        
+        # 尝试从内存缓存获取
+        if use_cache:
+            from cognix.core.memory_system import get_memory_system
+            memory_system = get_memory_system()
+            cached_content = memory_system._get_cached_memory(category)
+            if cached_content is not None:
+                return cached_content
+        
+        # 缓存未命中，读取文件
+        content = file_path.read_text(encoding='utf-8')
+        
+        # 更新缓存
+        if use_cache:
+            mtime = int(file_path.stat().st_mtime * 1000)
+            memory_system._update_cache(category, content, mtime)
+        
+        return content
     
     def list_categories(self) -> List[str]:
         """获取所有可用分类列表"""
