@@ -15,21 +15,11 @@ Cognix 是一款自研的自托管混合记忆系统，结合 Markdown 文件和
 
 ### 1. 安装插件
 
-#### 本地开发安装
 ```bash
-# 方式1：直接指定本地路径安装
-openclaw plugins install ./openclaw-plugin-cognix
-
-# 方式2：先npm link到全局，再安装
-cd openclaw-plugin-cognix
-npm link
-openclaw plugins install openclaw-cognix-plugin
+openclaw plugins install @starnever0/openclaw-cognix-plugin
 ```
 
-#### 发布后安装（发布到npm后使用）
-```bash
-openclaw plugins install @your-org/openclaw-plugin-memory-cognix
-```
+> 本地开发安装请使用：`openclaw plugins install ./openclaw-plugin-cognix`
 
 ### 2. 配置插件
 

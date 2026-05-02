@@ -1,0 +1,7 @@
+*.ts
+!*.d.ts
+node_modules/
+.npmrc
+.gitignore
+.github/
+tests/

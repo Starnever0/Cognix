@@ -91,75 +91,81 @@ interface CognixProvider {
 }
 
 class DefaultCognixProvider implements CognixProvider {
-  private client: any;
-  private initPromise: Promise<void> | null = null;
+  private readonly baseUrl: string;
+  private readonly headers: Record<string, string>;
 
   constructor(
     private readonly apiKey: string,
-    private readonly host?: string,
+    private readonly host: string = "http://localhost:8765",
     private readonly userId?: string,
-  ) { }
-
-  private async ensureClient(): Promise<void> {
-    if (this.client) return;
-    if (this.initPromise) return this.initPromise;
-    this.initPromise = this._init();
-    return this.initPromise;
+  ) {
+    this.baseUrl = host.endsWith("/") ? host.slice(0, -1) : host;
+    this.headers = {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
   }
 
-  private async _init(): Promise<void> {
-    const { CognixClient } = await import("./lib/cognix.js");
-    const opts = { 
-      apiKey: this.apiKey,
-      host: this.host,
-      userId: this.userId
-    };
-    this.client = new CognixClient(opts);
+  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const response = await fetch(url, {
+      headers: this.headers,
+      ...options,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Cognix API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    return await response.json();
   }
 
   async add(
     messages: Array<{ role: string; content: string }>,
     options: AddOptions,
   ): Promise<AddResult> {
-    await this.ensureClient();
-    const opts: Record<string, unknown> = { 
-      user_id: options.user_id,
-      long_term: options.long_term ?? true
-    };
-    if (options.run_id) opts.run_id = options.run_id;
-    if (options.custom_instructions)
-      opts.custom_instructions = options.custom_instructions;
-    if (options.agent_id) opts.agent_id = options.agent_id;
-
-    const result = await this.client.add(messages, opts);
+    const result = await this.request("/v1/memories", {
+      method: "POST",
+      body: JSON.stringify({
+        messages,
+        user_id: options.user_id,
+        run_id: options.run_id,
+        agent_id: options.agent_id,
+        custom_instructions: options.custom_instructions,
+        long_term: options.long_term ?? true,
+      }),
+    });
+    
     return normalizeAddResult(result);
   }
 
   async search(query: string, options: SearchOptions): Promise<MemoryItem[]> {
-    await this.ensureClient();
-    const opts: Record<string, unknown> = { user_id: options.user_id };
-    if (options.run_id) opts.run_id = options.run_id;
-    if (options.top_k != null) opts.top_k = options.top_k;
-    if (options.threshold != null) opts.threshold = options.threshold;
-    if (options.agent_id) opts.agent_id = options.agent_id;
-
-    const results = await this.client.search(query, opts);
+    const params = new URLSearchParams({
+      q: query,
+      user_id: options.user_id,
+      ...(options.run_id && { run_id: options.run_id }),
+      ...(options.top_k != null && { top_k: String(options.top_k) }),
+      ...(options.threshold != null && { threshold: String(options.threshold) }),
+      ...(options.agent_id && { agent_id: options.agent_id }),
+    });
+    
+    const results = await this.request(`/v1/memories/search?${params}`);
     return normalizeSearchResults(results);
   }
 
   async get(memoryId: string): Promise<MemoryItem> {
-    await this.ensureClient();
-    const result = await this.client.get(memoryId);
+    const result = await this.request(`/v1/memories/${memoryId}`);
     return normalizeMemoryItem(result);
   }
 
   async getAll(options: ListOptions): Promise<MemoryItem[]> {
-    await this.ensureClient();
-    const opts: Record<string, unknown> = { user_id: options.user_id };
-    if (options.run_id) opts.run_id = options.run_id;
-    if (options.page_size != null) opts.page_size = options.page_size;
-
-    const results = await this.client.getAll(opts);
+    const params = new URLSearchParams({
+      user_id: options.user_id,
+      ...(options.run_id && { run_id: options.run_id }),
+      ...(options.page_size != null && { limit: String(options.page_size) }),
+    });
+    
+    const results = await this.request(`/v1/memories?${params}`);
     if (Array.isArray(results)) return results.map(normalizeMemoryItem);
     if (results?.results && Array.isArray(results.results))
       return results.results.map(normalizeMemoryItem);
@@ -167,8 +173,9 @@ class DefaultCognixProvider implements CognixProvider {
   }
 
   async delete(memoryId: string): Promise<void> {
-    await this.ensureClient();
-    await this.client.delete(memoryId);
+    await this.request(`/v1/memories/${memoryId}`, {
+      method: "DELETE",
+    });
   }
 }
 
