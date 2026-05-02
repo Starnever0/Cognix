@@ -52,14 +52,13 @@ cognix serve
 
 ### 工具接口
 
-| 工具名称 | 功能说明 |
+| 工具名 | 功能描述 |
 |---------|---------|
-| `memory_search` | 语义搜索相关记忆片段 |
-| `memory_get` | 读取指定记忆文件内容 |
-| `memory_write` | 写入内容到记忆文件，支持追加模式 |
-| `memory_list` | 列出所有记忆文件 |
-| `memory_forget` | 删除指定记忆（扩展功能） |
-| `memory_store` | 存储记忆（兼容旧版本接口，已废弃） |
+| `memory_search` | 搜索长期记忆，用于获取用户偏好、过去决策、历史讨论等上下文 |
+| `memory_store` | 保存重要信息到长期记忆，支持用户ID指定、会话级存储 |
+| `memory_get` | 根据ID获取指定记忆 |
+| `memory_list` | 列出用户所有记忆，支持数量限制和用户ID指定 |
+| `memory_forget` | 删除指定ID的记忆 |
 
 ### CLI 命令
 

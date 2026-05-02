@@ -49,6 +49,7 @@ interface SearchOptions {
 }
 
 interface ListOptions {
+  agent_id?: string;
   user_id: string;
   run_id?: string;
   page_size?: number;
@@ -165,7 +166,7 @@ class DefaultCognixProvider implements CognixProvider {
       ...(options.page_size != null && { limit: String(options.page_size) }),
     });
     
-    const results = await this.request(`/v1/memories?${params}`);
+    const results = await this.request<any>(`/v1/memories?${params}`);
     if (Array.isArray(results)) return results.map(normalizeMemoryItem);
     if (results?.results && Array.isArray(results.results))
       return results.results.map(normalizeMemoryItem);
@@ -204,7 +205,7 @@ function normalizeSearchResults(raw: any): MemoryItem[] {
 }
 
 function normalizeAddResult(raw: any): AddResult {
-  if (raw?.results && Array.isArray(raw.results)) {
+  if (raw && typeof raw === 'object' && 'results' in raw && Array.isArray(raw.results)) {
     return {
       results: raw.results.map((r: any) => ({
         id: r.id ?? r.memory_id ?? "",
@@ -228,16 +229,6 @@ function normalizeAddResult(raw: any): AddResult {
 // ============================================================================
 // Config Parser
 // ============================================================================
-
-function resolveEnvVars(value: string): string {
-  return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
-    const envValue = process.env[envVar];
-    if (!envValue) {
-      throw new Error(`Environment variable ${envVar} is not set`);
-    }
-    return envValue;
-  });
-}
 
 // ============================================================================
 // Default Custom Instructions
@@ -299,10 +290,10 @@ const cognixConfigSchema = {
     }
 
     return {
-      apiKey: typeof cfg.apiKey === "string" ? resolveEnvVars(cfg.apiKey) : undefined,
+      apiKey: typeof cfg.apiKey === "string" ? cfg.apiKey : undefined,
       agentId: typeof cfg.agentId === "string" ? cfg.agentId : undefined,
       userId: typeof cfg.userId === "string" && cfg.userId ? cfg.userId : "default",
-      host: typeof cfg.host === "string" ? resolveEnvVars(cfg.host) : undefined,
+      host: typeof cfg.host === "string" ? cfg.host : undefined,
       autoCapture: cfg.autoCapture !== false,
       autoRecall: cfg.autoRecall !== false,
       customInstructions:
@@ -330,6 +321,8 @@ function createProvider(
 // Plugin Definition
 // ============================================================================
 
+let currentSessionId: string | undefined;
+
 export default definePluginEntry((api) => {
   const config = cognixConfigSchema.parse(api.config);
   const provider = createProvider(config);
@@ -338,19 +331,42 @@ export default definePluginEntry((api) => {
   const before_agent_start = async (context: any) => {
     if (!config.autoRecall) return;
 
+    // Track session ID
+    const sessionId = context?.sessionKey ?? undefined;
+    if (sessionId) currentSessionId = sessionId;
+
     const lastUserMessage = context.messages.findLast(m => m.role === "user")?.content;
     if (!lastUserMessage) return;
 
     try {
-      const memories = await provider.search(lastUserMessage, {
+      // Search long-term memories
+      const longTermResults = await provider.search(lastUserMessage, {
         user_id: context.userId ?? config.userId,
         agent_id: context.agentId ?? config.agentId,
         top_k: config.topK,
         threshold: config.searchThreshold,
       });
 
-      if (memories.length > 0) {
-        context.systemPrompt = `【用户记忆】\n${memories.map(m => `- ${m.memory}`).join("\n")}\n\n${context.systemPrompt}`;
+      // Search session memories if we have a session ID
+      let sessionResults: MemoryItem[] = [];
+      if (currentSessionId) {
+        sessionResults = await provider.search(lastUserMessage, {
+          user_id: context.userId ?? config.userId,
+          agent_id: context.agentId ?? config.agentId,
+          run_id: currentSessionId,
+          top_k: config.topK,
+          threshold: config.searchThreshold,
+        });
+      }
+
+      // Deduplicate session results against long-term
+      const longTermIds = new Set(longTermResults.map(r => r.id));
+      const uniqueSessionResults = sessionResults.filter(r => !longTermIds.has(r.id));
+
+      const allResults = [...longTermResults, ...uniqueSessionResults];
+
+      if (allResults.length > 0) {
+        context.systemPrompt = `【用户记忆】\n${allResults.map(m => `- ${m.memory}`).join("\n")}\n\n${context.systemPrompt}`;
       }
     } catch (e) {
       console.error("Failed to recall memories:", e);
@@ -365,7 +381,7 @@ export default definePluginEntry((api) => {
       await provider.add(context.messages, {
         user_id: context.userId ?? config.userId,
         agent_id: context.agentId ?? config.agentId,
-        run_id: context.runId,
+        run_id: currentSessionId,
         custom_instructions: config.customInstructions,
       });
     } catch (e) {
@@ -380,21 +396,20 @@ export default definePluginEntry((api) => {
     },
     tools: {
       memory_search: {
-        description: "Semantic search for relevant memory fragments",
+        description: "Search through long-term memories. Use when you need context about user preferences, past decisions, or previously discussed topics.",
         parameters: Type.Object({
           query: Type.String({ description: "Search query text" }),
           limit: Type.Optional(Type.Number({ description: "Number of results to return, default 10", default: 10 })),
-          file_filter: Type.Optional(Type.Array(Type.String(), { description: "Limit search to specific files" })),
+          userId: Type.Optional(Type.String({ description: "User ID to scope search" })),
         }),
-        async execute({ query, limit, file_filter }, context: any) {
+        async execute({ query, limit, userId }, context: any) {
           const results = await provider.search(query, {
-            user_id: context.userId ?? config.userId,
+            user_id: userId ?? context.userId ?? config.userId,
             agent_id: context.agentId ?? config.agentId,
             top_k: limit ?? 10,
             threshold: config.searchThreshold,
           });
           
-          // 转换为标准返回格式
           const standardResults = results.map(m => ({
             text: m.memory,
             path: m.metadata?.path || `memory/${m.id}.md`,
@@ -408,112 +423,79 @@ export default definePluginEntry((api) => {
           };
         },
       },
-      memory_write: {
-        description: "Write content to memory file, supports append mode",
+      memory_store: {
+        description: "Save important information in long-term memory. Use for preferences, facts, decisions, and anything worth remembering.",
         parameters: Type.Object({
-          path: Type.String({ description: "Path to the memory file, e.g. MEMORY.md or memory/2026-05-02.md" }),
-          content: Type.String({ description: "Content to write" }),
-          append: Type.Optional(Type.Boolean({ description: "Whether to append to the file, default false", default: false })),
-          long_term: Type.Optional(Type.Boolean({ description: "Store as long-term memory", default: true })),
+          text: Type.String({ description: "Information to remember" }),
+          userId: Type.Optional(Type.String({ description: "User ID to scope this memory" })),
+          long_term: Type.Optional(Type.Boolean({ description: "Store as long-term memory, default true", default: true })),
+          metadata: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Additional metadata" })),
         }),
-        async execute({ path, content, append, long_term }, context: any) {
-          // 处理路径，如果是MEMORY.md或日期格式的文件，使用分类存储
-          let storeContent = content;
-          if (append) {
-            // 追加模式，先读取现有内容再合并
-            try {
-              const existing = await provider.get(path);
-              if (existing?.memory) {
-                storeContent = existing.memory + "\n" + content;
-              }
-            } catch (e) {
-              // 文件不存在，直接写入
-            }
-          }
-          
+        async execute({ text, userId, long_term, metadata }, context: any) {        
           const result = await provider.add(
-            [{ role: "user", content: storeContent }],
+            [{ role: "user", content: text }],
             {
-              user_id: context.userId ?? config.userId,
+              user_id: userId ?? context.userId ?? config.userId,
               agent_id: context.agentId ?? config.agentId,
-              run_id: context.runId,
+              run_id: !long_term ? context.runId : undefined,
               long_term,
             }
           );
           
+          const added = result.results?.filter(r => r.event === "ADD") ?? [];
+          const updated = result.results?.filter(r => r.event === "UPDATE") ?? [];
+          
+          const summary = [];
+          if (added.length > 0) summary.push(`${added.length} new ${added.length === 1 ? "memory" : "memories"} added`);
+          if (updated.length > 0) summary.push(`${updated.length} ${updated.length === 1 ? "memory" : "memories"} updated`);
+          
           return {
-            success: result.results.length > 0,
-            path: path,
+            content: summary.join(", "),
+            added: added.length,
+            updated: updated.length,
+            results: result.results,
           };
         },
       },
       memory_list: {
-        description: "List all memory files",
+        description: "List all memories for the user",
         parameters: Type.Object({
-          pattern: Type.Optional(Type.String({ description: "File matching pattern" })),
+          limit: Type.Optional(Type.Number({ description: "Maximum number of memories to return, default 20", default: 20 })),
+          userId: Type.Optional(Type.String({ description: "User ID to scope list" })),
         }),
-        async execute({ pattern }, context: any) {
+        async execute({ limit, userId }, context: any) {
           const results = await provider.getAll({
-            user_id: context.userId ?? config.userId,
+            user_id: userId ?? context.userId ?? config.userId,
             agent_id: context.agentId ?? config.agentId,
+            page_size: limit,
           });
-          
-          // 转换为标准返回格式
-          const files = results.map(m => ({
-            path: m.metadata?.path || `memory/${m.id}.md`,
-            last_modified: new Date(m.updated_at || m.created_at || Date.now()).getTime(),
-            size: m.memory?.length || 0,
-          }));
-          
-          // 应用pattern过滤
-          const filtered = pattern 
-            ? files.filter(f => f.path.includes(pattern.replace("*", "")))
-            : files;
-          
           return {
-            files: filtered,
+            content: JSON.stringify(results, null, 2),
+            contentType: "json",
           };
         },
       },
       memory_get: {
-        description: "Read content from specified memory file",
+        description: "Get a specific memory by ID",
         parameters: Type.Object({
-          path: Type.String({ description: "Path to the memory file" }),
-          start_line: Type.Optional(Type.Number({ description: "Start line number" })),
-          end_line: Type.Optional(Type.Number({ description: "End line number" })),
+          memory_id: Type.String({ description: "ID of the memory to retrieve" }),
+          userId: Type.Optional(Type.String({ description: "User ID the memory belongs to" })),
         }),
-        async execute({ path, start_line, end_line }, context: any) {
-          try {
-            const result = await provider.get(path);
-            let text = result?.memory || "";
-            
-            // 处理行范围
-            if (start_line || end_line) {
-              const lines = text.split("\n");
-              const start = start_line ? Math.max(0, start_line - 1) : 0;
-              const end = end_line ? Math.min(lines.length, end_line) : lines.length;
-              text = lines.slice(start, end).join("\n");
-            }
-            
-            return {
-              text: text,
-              path: path,
-            };
-          } catch (e) {
-            // 文件不存在时返回空字符串
-            return {
-              text: "",
-              path: path,
-            };
-          }
+        async execute({ memory_id, userId }, context: any) {
+          const result = await provider.get(memory_id);
+          return {
+            content: JSON.stringify(result, null, 2),
+            contentType: "json",
+          };
         },
       },
       memory_forget: {
         description: "Delete a specific memory by ID",
         parameters: Type.Object({
           memory_id: Type.String({ description: "ID of the memory to delete" }),
+          userId: Type.Optional(Type.String({ description: "User ID the memory belongs to" })),
         }),
-        async execute({ memory_id }, context: any) {
+        async execute({ memory_id, userId }, context: any) {
           await provider.delete(memory_id);
           return {
             content: JSON.stringify({ status: "success", message: "Memory deleted" }),

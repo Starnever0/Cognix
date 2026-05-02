@@ -1,43 +1,93 @@
 {
   "id": "openclaw-cognix-plugin",
   "description": "OpenClaw memory plugin using Cognix (self-hosted)",
+  "homepage": "https://github.com/Starnever0/Cognix",
   "kind": "memory",
   "uiHints": {
     "host": {
-      "label": "Cognix API Host",
+      "label": "Cognix Host",
       "placeholder": "http://localhost:8765",
-      "help": "Cognix API 服务器地址"
+      "help": "Cognix API Base URL"
     },
     "apiKey": {
-      "label": "API Key",
+      "label": "Cognix API Key",
       "sensitive": true,
-      "help": "API Key（可使用 dummy）"
+      "placeholder": "cognix-...",
+      "help": "API key for your Cognix instance"
     },
     "userId": {
-      "label": "User ID",
+      "label": "Default User ID",
       "placeholder": "default",
-      "help": "用户标识"
+      "help": "User ID for scoping memories"
+    },
+    "agentId": {
+      "label": "Agent ID",
+      "placeholder": "default",
+      "advanced": true
     },
     "autoCapture": {
       "label": "Auto-Capture",
-      "help": "自动存储对话内容"
+      "help": "Automatically store conversation context after each agent turn"
     },
     "autoRecall": {
       "label": "Auto-Recall",
-      "help": "自动注入相关记忆"
+      "help": "Automatically inject relevant memories before each agent turn"
+    },
+    "customInstructions": {
+      "label": "Custom Instructions",
+      "placeholder": "Only store user preferences and important facts...",
+      "help": "Natural language rules for what Cognix should store or exclude"
+    },
+    "searchThreshold": {
+      "label": "Search Threshold",
+      "placeholder": "0.5",
+      "help": "Minimum similarity score for search results (0-1). Default: 0.5"
+    },
+    "topK": {
+      "label": "Top K Results",
+      "placeholder": "5",
+      "help": "Maximum number of memories to retrieve"
     }
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "host": { "type": "string" },
-      "apiKey": { "type": "string" },
-      "userId": { "type": "string" },
-      "autoCapture": { "type": "boolean" },
-      "autoRecall": { "type": "boolean" },
-      "searchThreshold": { "type": "number" },
-      "topK": { "type": "number" }
-    }
+      "host": {
+        "type": "string"
+      },
+      "apiKey": {
+        "type": "string"
+      },
+      "userId": {
+        "type": "string"
+      },
+      "agentId": {
+        "type": "string"
+      },
+      "autoCapture": {
+        "type": "boolean",
+        "default": true
+      },
+      "autoRecall": {
+        "type": "boolean",
+        "default": true
+      },
+      "customInstructions": {
+        "type": "string"
+      },
+      "searchThreshold": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5
+      },
+      "topK": {
+        "type": "number",
+        "minimum": 1,
+        "default": 5
+      }
+    },
+    "required": ["apiKey"]
   }
 }
