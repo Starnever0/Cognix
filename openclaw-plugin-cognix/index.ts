@@ -373,36 +373,59 @@ export default definePluginEntry((api) => {
     },
     tools: {
       memory_search: {
-        description: "Search user memories using semantic search",
+        description: "Semantic search for relevant memory fragments",
         parameters: Type.Object({
-          query: Type.String({ description: "Search query to find relevant memories" }),
-          top_k: Type.Optional(Type.Number({ description: "Number of results to return", default: 5 })),
-          threshold: Type.Optional(Type.Number({ description: "Minimum similarity score", default: 0.5 })),
-          long_term: Type.Optional(Type.Boolean({ description: "Search long-term memories only", default: true })),
+          query: Type.String({ description: "Search query text" }),
+          limit: Type.Optional(Type.Number({ description: "Number of results to return, default 10", default: 10 })),
+          file_filter: Type.Optional(Type.Array(Type.String(), { description: "Limit search to specific files" })),
         }),
-        async execute({ query, top_k, threshold }, context: any) {
+        async execute({ query, limit, file_filter }, context: any) {
           const results = await provider.search(query, {
             user_id: context.userId ?? config.userId,
             agent_id: context.agentId ?? config.agentId,
-            top_k: top_k ?? config.topK,
-            threshold: threshold ?? config.searchThreshold,
+            top_k: limit ?? 10,
+            threshold: config.searchThreshold,
           });
+          
+          // 转换为标准返回格式
+          const standardResults = results.map(m => ({
+            text: m.memory,
+            path: m.metadata?.path || `memory/${m.id}.md`,
+            score: m.score || 0,
+            start_line: m.metadata?.start_line,
+            end_line: m.metadata?.end_line,
+          }));
+          
           return {
-            content: JSON.stringify(results, null, 2),
-            contentType: "json",
+            results: standardResults,
           };
         },
       },
-      memory_store: {
-        description: "Store new memory for the user",
+      memory_write: {
+        description: "Write content to memory file, supports append mode",
         parameters: Type.Object({
-          content: Type.String({ description: "Memory content to store" }),
+          path: Type.String({ description: "Path to the memory file, e.g. MEMORY.md or memory/2026-05-02.md" }),
+          content: Type.String({ description: "Content to write" }),
+          append: Type.Optional(Type.Boolean({ description: "Whether to append to the file, default false", default: false })),
           long_term: Type.Optional(Type.Boolean({ description: "Store as long-term memory", default: true })),
-          metadata: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Additional metadata" })),
         }),
-        async execute({ content, long_term, metadata }, context: any) {
+        async execute({ path, content, append, long_term }, context: any) {
+          // 处理路径，如果是MEMORY.md或日期格式的文件，使用分类存储
+          let storeContent = content;
+          if (append) {
+            // 追加模式，先读取现有内容再合并
+            try {
+              const existing = await provider.get(path);
+              if (existing?.memory) {
+                storeContent = existing.memory + "\n" + content;
+              }
+            } catch (e) {
+              // 文件不存在，直接写入
+            }
+          }
+          
           const result = await provider.add(
-            [{ role: "user", content }],
+            [{ role: "user", content: storeContent }],
             {
               user_id: context.userId ?? config.userId,
               agent_id: context.agentId ?? config.agentId,
@@ -410,40 +433,72 @@ export default definePluginEntry((api) => {
               long_term,
             }
           );
+          
           return {
-            content: JSON.stringify(result, null, 2),
-            contentType: "json",
+            success: result.results.length > 0,
+            path: path,
           };
         },
       },
       memory_list: {
-        description: "List all memories for the user",
+        description: "List all memory files",
         parameters: Type.Object({
-          limit: Type.Optional(Type.Number({ description: "Maximum number of memories to return", default: 20 })),
+          pattern: Type.Optional(Type.String({ description: "File matching pattern" })),
         }),
-        async execute({ limit }, context: any) {
+        async execute({ pattern }, context: any) {
           const results = await provider.getAll({
             user_id: context.userId ?? config.userId,
             agent_id: context.agentId ?? config.agentId,
-            page_size: limit,
           });
+          
+          // 转换为标准返回格式
+          const files = results.map(m => ({
+            path: m.metadata?.path || `memory/${m.id}.md`,
+            last_modified: new Date(m.updated_at || m.created_at || Date.now()).getTime(),
+            size: m.memory?.length || 0,
+          }));
+          
+          // 应用pattern过滤
+          const filtered = pattern 
+            ? files.filter(f => f.path.includes(pattern.replace("*", "")))
+            : files;
+          
           return {
-            content: JSON.stringify(results, null, 2),
-            contentType: "json",
+            files: filtered,
           };
         },
       },
       memory_get: {
-        description: "Get a specific memory by ID",
+        description: "Read content from specified memory file",
         parameters: Type.Object({
-          memory_id: Type.String({ description: "ID of the memory to retrieve" }),
+          path: Type.String({ description: "Path to the memory file" }),
+          start_line: Type.Optional(Type.Number({ description: "Start line number" })),
+          end_line: Type.Optional(Type.Number({ description: "End line number" })),
         }),
-        async execute({ memory_id }, context: any) {
-          const result = await provider.get(memory_id);
-          return {
-            content: JSON.stringify(result, null, 2),
-            contentType: "json",
-          };
+        async execute({ path, start_line, end_line }, context: any) {
+          try {
+            const result = await provider.get(path);
+            let text = result?.memory || "";
+            
+            // 处理行范围
+            if (start_line || end_line) {
+              const lines = text.split("\n");
+              const start = start_line ? Math.max(0, start_line - 1) : 0;
+              const end = end_line ? Math.min(lines.length, end_line) : lines.length;
+              text = lines.slice(start, end).join("\n");
+            }
+            
+            return {
+              text: text,
+              path: path,
+            };
+          } catch (e) {
+            // 文件不存在时返回空字符串
+            return {
+              text: "",
+              path: path,
+            };
+          }
         },
       },
       memory_forget: {
